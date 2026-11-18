@@ -525,4 +525,66 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get makePrivateTooltip => 'Make Private';
+
+  @override
+  String get linkedAccounts => 'Linked Accounts';
+
+  @override
+  String get linkedAccountsDesc =>
+      'Link Google and Apple to use the same account and data on Android and iPhone.';
+
+  @override
+  String get linkAction => 'Link';
+
+  @override
+  String get linkedLabel => 'Linked';
+
+  @override
+  String get linkMergeWarning =>
+      'If this account already has YARA data, it will be merged into the account you are using now, and the other account will be removed. Continue?';
+
+  @override
+  String get linkSuccess =>
+      'Account linked. Your data is now shared across devices.';
+
+  @override
+  String get linkAlreadyLinked => 'This account is already linked.';
+
+  @override
+  String get linkProviderInUse =>
+      'Another account from this provider is already linked.';
+
+  @override
+  String get linkError => 'Could not link the account. Please try again.';
+
+  @override
+  String get otpExpired => 'The code has expired. Please request a new one.';
+
+  @override
+  String get otpTooManyAttempts =>
+      'Too many attempts. Please request a new code.';
+
+  @override
+  String get tooManyRequests =>
+      'Too many requests. Please wait a minute and try again.';
+
+  @override
+  String get accountExistsDifferentMethod =>
+      'This email already uses another sign-in method. Sign in with it, then link this one in Linked Accounts.';
+
+  @override
+  String get signInError => 'Could not sign in. Check your email and password.';
+
+  @override
+  String get confirmPasswordTitle => 'Confirm your password';
+
+  @override
+  String get confirmPasswordDesc =>
+      'For security, enter your password to continue.';
+
+  @override
+  String get invalidUsername => 'Use up to 40 characters, without \"/\".';
+
+  @override
+  String get actionFailed => 'Something went wrong. Please try again.';
 }

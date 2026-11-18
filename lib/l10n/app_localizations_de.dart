@@ -534,4 +534,70 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get makePrivateTooltip => 'Privat machen';
+
+  @override
+  String get linkedAccounts => 'Verknüpfte Konten';
+
+  @override
+  String get linkedAccountsDesc =>
+      'Verknüpfe Google und Apple, um dasselbe Konto und dieselben Daten auf Android und iPhone zu nutzen.';
+
+  @override
+  String get linkAction => 'Verknüpfen';
+
+  @override
+  String get linkedLabel => 'Verknüpft';
+
+  @override
+  String get linkMergeWarning =>
+      'Falls dieses Konto bereits YARA-Daten hat, werden sie mit dem aktuell verwendeten Konto zusammengeführt und das andere Konto wird entfernt. Fortfahren?';
+
+  @override
+  String get linkSuccess =>
+      'Konto verknüpft. Deine Daten werden jetzt geräteübergreifend geteilt.';
+
+  @override
+  String get linkAlreadyLinked => 'Dieses Konto ist bereits verknüpft.';
+
+  @override
+  String get linkProviderInUse =>
+      'Ein anderes Konto dieses Anbieters ist bereits verknüpft.';
+
+  @override
+  String get linkError =>
+      'Das Konto konnte nicht verknüpft werden. Bitte versuche es erneut.';
+
+  @override
+  String get otpExpired =>
+      'Der Code ist abgelaufen. Bitte fordere einen neuen an.';
+
+  @override
+  String get otpTooManyAttempts =>
+      'Zu viele Versuche. Bitte fordere einen neuen Code an.';
+
+  @override
+  String get tooManyRequests =>
+      'Zu viele Anfragen. Bitte warte eine Minute und versuche es erneut.';
+
+  @override
+  String get accountExistsDifferentMethod =>
+      'Diese E-Mail verwendet bereits eine andere Anmeldemethode. Melde dich damit an und verknüpfe diese Methode unter Verknüpfte Konten.';
+
+  @override
+  String get signInError =>
+      'Anmeldung fehlgeschlagen. Prüfe E-Mail und Passwort.';
+
+  @override
+  String get confirmPasswordTitle => 'Passwort bestätigen';
+
+  @override
+  String get confirmPasswordDesc =>
+      'Gib aus Sicherheitsgründen dein Passwort ein, um fortzufahren.';
+
+  @override
+  String get invalidUsername => 'Bis zu 40 Zeichen, ohne \"/\".';
+
+  @override
+  String get actionFailed =>
+      'Etwas ist schiefgelaufen. Bitte versuche es erneut.';
 }

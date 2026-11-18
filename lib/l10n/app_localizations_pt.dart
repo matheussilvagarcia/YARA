@@ -532,4 +532,67 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get makePrivateTooltip => 'Tornar Privada';
+
+  @override
+  String get linkedAccounts => 'Contas Vinculadas';
+
+  @override
+  String get linkedAccountsDesc =>
+      'Vincule Google e Apple para usar a mesma conta e os mesmos dados no Android e no iPhone.';
+
+  @override
+  String get linkAction => 'Vincular';
+
+  @override
+  String get linkedLabel => 'Vinculada';
+
+  @override
+  String get linkMergeWarning =>
+      'Se essa conta já tiver dados no YARA, eles serão juntados à conta que você está usando agora, e a outra conta será removida. Continuar?';
+
+  @override
+  String get linkSuccess =>
+      'Conta vinculada. Seus dados agora são compartilhados entre os aparelhos.';
+
+  @override
+  String get linkAlreadyLinked => 'Essa conta já está vinculada.';
+
+  @override
+  String get linkProviderInUse =>
+      'Já existe outra conta desse provedor vinculada.';
+
+  @override
+  String get linkError => 'Não foi possível vincular a conta. Tente novamente.';
+
+  @override
+  String get otpExpired => 'O código expirou. Solicite um novo.';
+
+  @override
+  String get otpTooManyAttempts =>
+      'Muitas tentativas. Solicite um novo código.';
+
+  @override
+  String get tooManyRequests =>
+      'Muitas solicitações. Aguarde um minuto e tente novamente.';
+
+  @override
+  String get accountExistsDifferentMethod =>
+      'Este e-mail já usa outro método de login. Entre com ele e depois vincule este em Contas Vinculadas.';
+
+  @override
+  String get signInError =>
+      'Não foi possível entrar. Verifique seu e-mail e senha.';
+
+  @override
+  String get confirmPasswordTitle => 'Confirme sua senha';
+
+  @override
+  String get confirmPasswordDesc =>
+      'Por segurança, digite sua senha para continuar.';
+
+  @override
+  String get invalidUsername => 'Use até 40 caracteres, sem \"/\".';
+
+  @override
+  String get actionFailed => 'Algo deu errado. Tente novamente.';
 }

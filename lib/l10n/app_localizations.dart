@@ -1099,6 +1099,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Make Private'**
   String get makePrivateTooltip;
+
+  /// No description provided for @linkedAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked Accounts'**
+  String get linkedAccounts;
+
+  /// No description provided for @linkedAccountsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Link Google and Apple to use the same account and data on Android and iPhone.'**
+  String get linkedAccountsDesc;
+
+  /// No description provided for @linkAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get linkAction;
+
+  /// No description provided for @linkedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked'**
+  String get linkedLabel;
+
+  /// No description provided for @linkMergeWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'If this account already has YARA data, it will be merged into the account you are using now, and the other account will be removed. Continue?'**
+  String get linkMergeWarning;
+
+  /// No description provided for @linkSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Account linked. Your data is now shared across devices.'**
+  String get linkSuccess;
+
+  /// No description provided for @linkAlreadyLinked.
+  ///
+  /// In en, this message translates to:
+  /// **'This account is already linked.'**
+  String get linkAlreadyLinked;
+
+  /// No description provided for @linkProviderInUse.
+  ///
+  /// In en, this message translates to:
+  /// **'Another account from this provider is already linked.'**
+  String get linkProviderInUse;
+
+  /// No description provided for @linkError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not link the account. Please try again.'**
+  String get linkError;
+
+  /// No description provided for @otpExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'The code has expired. Please request a new one.'**
+  String get otpExpired;
+
+  /// No description provided for @otpTooManyAttempts.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many attempts. Please request a new code.'**
+  String get otpTooManyAttempts;
+
+  /// No description provided for @tooManyRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many requests. Please wait a minute and try again.'**
+  String get tooManyRequests;
+
+  /// No description provided for @accountExistsDifferentMethod.
+  ///
+  /// In en, this message translates to:
+  /// **'This email already uses another sign-in method. Sign in with it, then link this one in Linked Accounts.'**
+  String get accountExistsDifferentMethod;
+
+  /// No description provided for @signInError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not sign in. Check your email and password.'**
+  String get signInError;
+
+  /// No description provided for @confirmPasswordTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm your password'**
+  String get confirmPasswordTitle;
+
+  /// No description provided for @confirmPasswordDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'For security, enter your password to continue.'**
+  String get confirmPasswordDesc;
+
+  /// No description provided for @invalidUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Use up to 40 characters, without \"/\".'**
+  String get invalidUsername;
+
+  /// No description provided for @actionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong. Please try again.'**
+  String get actionFailed;
 }
 
 class _AppLocalizationsDelegate

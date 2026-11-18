@@ -558,62 +558,207 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirm2 != true || !mounted) return;
 
     final messenger = ScaffoldMessenger.of(context);
+    final authService = AuthService();
+
+    // Firebase only deletes accounts with a recent sign-in, so the user
+    // confirms their identity first.
+    String? password;
+    if (authService.usesPasswordOnly) {
+      password = await _promptPassword();
+      if (password == null || password.isEmpty || !mounted) return;
+    }
+    final reauth = await authService.reauthenticate(password: password);
+    if (!reauth.success) {
+      if (!reauth.cancelled) {
+        messenger.showSnackBar(SnackBar(content: Text(l10n.deleteAccountError)));
+      }
+      return;
+    }
+    if (!mounted) return;
+
     BuildContext? loadingDialogContext;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        loadingDialogContext = dialogContext;
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
 
-    try {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          loadingDialogContext = dialogContext;
-          return const Center(child: CircularProgressIndicator());
-        },
-      );
+    // Runs, daily stats, profile, username and community membership are
+    // deleted on the server by the cleanupDeletedUser function.
+    final result = await authService.deleteAccount();
 
-      final batch = FirebaseFirestore.instance.batch();
+    if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+      Navigator.of(loadingDialogContext!).pop();
+    }
 
-      final runsSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('runs')
-          .get();
-      for (var doc in runsSnapshot.docs) {
-        batch.delete(doc.reference);
-      }
+    if (!result.success) {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.deleteAccountError)));
+      return;
+    }
 
-      final statsSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('daily_stats')
-          .get();
-      for (var doc in statsSnapshot.docs) {
-        batch.delete(doc.reference);
-      }
+    final prefs = await SharedPreferences.getInstance();
+    final isDark = prefs.getBool('isDarkMode');
+    final lang = prefs.getString('languageCode');
+    await prefs.clear();
+    if (isDark != null) await prefs.setBool('isDarkMode', isDark);
+    if (lang != null) await prefs.setString('languageCode', lang);
 
-      batch.delete(FirebaseFirestore.instance.collection('users').doc(user.uid));
+    await authService.signOut();
+  }
 
-      await batch.commit();
+  Future<String?> _promptPassword() {
+    final l10n = AppLocalizations.of(context)!;
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.confirmPasswordTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(l10n.confirmPasswordDesc),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: l10n.passwordLabel,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: Text(l10n.continueAction),
+          ),
+        ],
+      ),
+    );
+  }
 
-      final prefs = await SharedPreferences.getInstance();
-      final isDark = prefs.getBool('isDarkMode');
-      final lang = prefs.getString('languageCode');
-      await prefs.clear();
-      if (isDark != null) await prefs.setBool('isDarkMode', isDark);
-      if (lang != null) await prefs.setString('languageCode', lang);
+  Future<void> _showLinkedAccountsDialog() async {
+    final l10n = AppLocalizations.of(context)!;
+    final authService = AuthService();
+    final providers = <String>[
+      AuthService.googleProviderId,
+      if (Platform.isIOS) AuthService.appleProviderId,
+    ];
 
-      await user.delete();
-      await AuthService().signOut();
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final linked = authService.linkedProviders;
+        return AlertDialog(
+          title: Text(l10n.linkedAccounts),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.linkedAccountsDesc),
+              const SizedBox(height: 12),
+              for (final providerId in providers)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: providerId == AuthService.googleProviderId
+                      ? SvgPicture.asset('lib/assets/Google.svg', width: 24, height: 24)
+                      : const Icon(Icons.apple, size: 28),
+                  title: Text(providerId == AuthService.googleProviderId ? 'Google' : 'Apple'),
+                  trailing: linked.contains(providerId)
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                            const SizedBox(width: 4),
+                            Text(l10n.linkedLabel),
+                          ],
+                        )
+                      : TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, providerId),
+                          child: Text(l10n.linkAction),
+                        ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(l10n.close),
+            ),
+          ],
+        );
+      },
+    );
 
-      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
-        Navigator.of(loadingDialogContext!).pop();
-      }
-    } catch (e) {
-      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
-        Navigator.of(loadingDialogContext!).pop();
-      }
-      messenger.showSnackBar(
-        SnackBar(content: Text(l10n.deleteAccountError)),
-      );
+    if (selected == null || !mounted) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.linkedAccounts),
+        content: Text(l10n.linkMergeWarning),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(l10n.continueAction),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    BuildContext? loadingDialogContext;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        loadingDialogContext = dialogContext;
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+
+    final outcome = await authService.linkProvider(selected);
+
+    if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+      Navigator.of(loadingDialogContext!).pop();
+    }
+
+    String? message;
+    switch (outcome) {
+      case LinkOutcome.linked:
+      case LinkOutcome.merged:
+        message = l10n.linkSuccess;
+      case LinkOutcome.alreadyLinked:
+        message = l10n.linkAlreadyLinked;
+      case LinkOutcome.providerInUse:
+        message = l10n.linkProviderInUse;
+      case LinkOutcome.error:
+        message = l10n.linkError;
+      case LinkOutcome.cancelled:
+        message = null;
+    }
+
+    if (message != null) {
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    }
+
+    if (outcome == LinkOutcome.merged && mounted) {
+      await _syncToCloud();
     }
   }
 
@@ -943,6 +1088,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     );
                   } else if (value == 'language') {
                     _showLanguageDialog();
+                  } else if (value == 'linked_accounts') {
+                    _showLinkedAccountsDialog();
                   } else if (value == 'delete_account') {
                     _deleteAccount();
                   }
@@ -975,6 +1122,16 @@ class _HomeScreenState extends State<HomeScreen> {
                         const Icon(Icons.language, size: 20),
                         const SizedBox(width: 12),
                         Text(l10n.language),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'linked_accounts',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.link, size: 20),
+                        const SizedBox(width: 12),
+                        Text(l10n.linkedAccounts),
                       ],
                     ),
                   ),

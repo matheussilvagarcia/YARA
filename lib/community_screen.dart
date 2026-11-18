@@ -111,8 +111,28 @@ class _CommunityScreenState extends State<CommunityScreen> {
     }
   }
 
+  String? _usernameError(AppLocalizations l10n, String? value) {
+    final name = value?.trim() ?? '';
+    if (name.isEmpty) return l10n.requiredField;
+    if (name.length > 40 || name.contains('/')) return l10n.invalidUsername;
+    return null;
+  }
+
+  Future<void> _runSafely(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
+      debugPrint('Community action failed: $e');
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.actionFailed)));
+      }
+    }
+  }
+
   Future<String> _generateUniqueCode() async {
-    final random = Random();
+    final random = Random.secure();
     while (true) {
       String code = (random.nextInt(90000) + 10000).toString();
       final query = await FirebaseFirestore.instance.collection('communities').where('code', isEqualTo: code).get();
@@ -226,28 +246,27 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 
   Future<void> _updateMemberRole(String memberUid, String newRole) async {
-    if (_communityId != null) {
+    if (_communityId == null) return;
+    await _runSafely(() async {
       await FirebaseFirestore.instance.collection('communities').doc(_communityId).update({'roles.$memberUid': newRole});
-    }
+    });
   }
 
   Future<void> _transferSuperiorRole(String newSuperiorUid) async {
-    if (_communityId != null) {
+    if (_communityId == null) return;
+    await _runSafely(() async {
       final currentUserUid = FirebaseAuth.instance.currentUser!.uid;
-      final batch = FirebaseFirestore.instance.batch();
-      final communityRef = FirebaseFirestore.instance.collection('communities').doc(_communityId);
-
-      batch.update(communityRef, {
+      await FirebaseFirestore.instance.collection('communities').doc(_communityId).update({
         'roles.$newSuperiorUid': 'superior',
         'roles.$currentUserUid': 'admin',
+        'ownerId': newSuperiorUid,
       });
-
-      await batch.commit();
-    }
+    });
   }
 
   Future<void> _kickMember(String memberUid) async {
-    if (_communityId != null) {
+    if (_communityId == null) return;
+    await _runSafely(() async {
       final batch = FirebaseFirestore.instance.batch();
       batch.update(FirebaseFirestore.instance.collection('communities').doc(_communityId), {
         'members': FieldValue.arrayRemove([memberUid]),
@@ -255,7 +274,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
       });
       batch.update(FirebaseFirestore.instance.collection('users').doc(memberUid), {'communityId': FieldValue.delete()});
       await batch.commit();
-    }
+    });
   }
 
   Future<void> _leaveCommunity(Map<String, dynamic> communityData) async {
@@ -338,12 +357,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
         final l10n = AppLocalizations.of(context)!;
         return AlertDialog(
           title: Text(l10n.createCommunity),
-          content: TextField(controller: nameController, decoration: InputDecoration(labelText: l10n.name)),
+          content: TextField(controller: nameController, maxLength: 50, decoration: InputDecoration(labelText: l10n.name)),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             ElevatedButton(
               onPressed: () {
-                if (nameController.text.trim().isNotEmpty) _createCommunity(nameController.text.trim());
+                if (nameController.text.trim().isNotEmpty) _runSafely(() => _createCommunity(nameController.text.trim()));
               },
               child: Text(l10n.create),
             ),
@@ -366,7 +385,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
             TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             ElevatedButton(
               onPressed: () {
-                if (codeController.text.trim().length == 5) _joinCommunity(codeController.text.trim());
+                if (codeController.text.trim().length == 5) _runSafely(() => _joinCommunity(codeController.text.trim()));
               },
               child: Text(l10n.join),
             ),
@@ -384,7 +403,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
         final l10n = AppLocalizations.of(context)!;
         return AlertDialog(
           title: Text(l10n.editCommunity),
-          content: TextField(controller: nameController, decoration: InputDecoration(labelText: l10n.newName)),
+          content: TextField(controller: nameController, maxLength: 50, decoration: InputDecoration(labelText: l10n.newName)),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             ElevatedButton(
@@ -411,13 +430,17 @@ class _CommunityScreenState extends State<CommunityScreen> {
         final l10n = AppLocalizations.of(context)!;
         return AlertDialog(
           title: Text(l10n.editUsername),
-          content: TextField(controller: userController, decoration: InputDecoration(labelText: l10n.newUsername)),
+          content: TextField(controller: userController, maxLength: 40, decoration: InputDecoration(labelText: l10n.newUsername)),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.cancel)),
             ElevatedButton(
               onPressed: () {
                 final newName = userController.text.trim();
-                if (newName.isNotEmpty && newName != _username) {
+                if (_usernameError(l10n, newName) != null) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text(l10n.invalidUsername)));
+                  return;
+                }
+                if (newName != _username) {
                   Navigator.pop(context);
                   _saveUsernameFromDialog(newName);
                 } else {
@@ -448,11 +471,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: r1, decoration: InputDecoration(labelText: l10n.firstPlace)),
-                TextField(controller: r2, decoration: InputDecoration(labelText: l10n.secondPlace)),
-                TextField(controller: r3, decoration: InputDecoration(labelText: l10n.thirdPlace)),
+                TextField(controller: r1, maxLength: 100, decoration: InputDecoration(labelText: l10n.firstPlace)),
+                TextField(controller: r2, maxLength: 100, decoration: InputDecoration(labelText: l10n.secondPlace)),
+                TextField(controller: r3, maxLength: 100, decoration: InputDecoration(labelText: l10n.thirdPlace)),
                 const SizedBox(height: 12),
-                TextField(controller: desc, maxLines: 3, decoration: InputDecoration(labelText: l10n.weekDescription, border: const OutlineInputBorder())),
+                TextField(controller: desc, maxLines: 3, maxLength: 500, decoration: InputDecoration(labelText: l10n.weekDescription, border: const OutlineInputBorder())),
               ],
             ),
           ),
@@ -584,8 +607,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
           const SizedBox(height: 16),
           TextFormField(
             controller: _usernameController,
+            maxLength: 40,
             decoration: InputDecoration(labelText: l10n.username, border: const OutlineInputBorder()),
-            validator: (v) => (v == null || v.trim().isEmpty) ? l10n.requiredField : null,
+            validator: (v) => _usernameError(l10n, v),
           ),
           const SizedBox(height: 12),
           ElevatedButton(onPressed: _saveUsername, child: Text(_username == null ? l10n.save : l10n.update)),
@@ -685,6 +709,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance.collection('communities').doc(_communityId).snapshots(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          // Removed from the community (or it no longer exists): back to setup.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _communityId = null);
+          });
+          return const Center(child: CircularProgressIndicator());
+        }
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         if (!snapshot.data!.exists) {
           WidgetsBinding.instance.addPostFrameCallback((_) {

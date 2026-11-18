@@ -1,40 +1,73 @@
-const functions = require("firebase-functions");
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const functionsV1 = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 const axios = require("axios");
+const crypto = require("crypto");
+const {getFirestore, FieldValue, Timestamp} = require("firebase-admin/firestore");
 
 admin.initializeApp();
 
-exports.sendOtpEmail = functions.https.onCall(async (data, context) => {
-  const payload = data.email ? data : (data.data || {});
-  const email = payload.email;
-  const otp = payload.otp;
-  const time = payload.time;
+const db = getFirestore();
 
-  if (!email || !otp || !time) {
-    throw new functions.https.HttpsError('invalid-argument', 'Email, OTP e tempo sao obrigatorios.');
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const FEDERATED_PROVIDERS = ["google.com", "apple.com"];
+
+const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+function normalizeEmail(email) {
+  if (typeof email !== "string") return null;
+  const normalized = email.trim().toLowerCase();
+  if (normalized.length > 254 || !EMAIL_REGEX.test(normalized)) return null;
+  return normalized;
+}
+
+function clientIp(request) {
+  const raw = request.rawRequest;
+  const forwarded = raw && raw.headers && raw.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim();
   }
+  return (raw && raw.ip) || "unknown";
+}
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    throw new functions.https.HttpsError('invalid-argument', 'Formato de email invalido.');
-  }
-
-  const db = admin.firestore();
-  const normalizedEmail = email.toLowerCase();
-  const rateLimitRef = db.collection('otp_rate_limits').doc(normalizedEmail);
-
-  const doc = await rateLimitRef.get();
+/**
+ * Sliding-window rate limit stored in `otp_rate_limits`. The `createdAt` field
+ * holds the expiration time used by the collection's TTL policy.
+ * @return {Promise<boolean>} true when the call is allowed.
+ */
+async function consumeRateLimit(key, windowMs, max) {
+  const ref = db.collection("otp_rate_limits").doc(sha256(key));
   const now = Date.now();
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const previous = snap.exists && Array.isArray(snap.data().hits) ? snap.data().hits : [];
+    const hits = previous.filter((t) => typeof t === "number" && now - t < windowMs);
+    if (hits.length >= max) return false;
+    hits.push(now);
+    tx.set(ref, {hits, createdAt: Timestamp.fromMillis(now + windowMs)});
+    return true;
+  });
+}
 
-  if (doc.exists) {
-    const lastRequest = doc.data().lastTimestamp;
-    if (now - lastRequest < 60000) {
-      throw new functions.https.HttpsError('resource-exhausted', 'Aguarde 1 minuto para solicitar novo codigo.');
+async function enforceOtpRateLimits(request, email) {
+  const ip = clientIp(request);
+  const checks = [
+    [`email-min:${email}`, 60 * 1000, 1],
+    [`email-hour:${email}`, 60 * 60 * 1000, 5],
+    [`ip-hour:${ip}`, 60 * 60 * 1000, 15],
+  ];
+  for (const [key, windowMs, max] of checks) {
+    if (!(await consumeRateLimit(key, windowMs, max))) {
+      throw new HttpsError("resource-exhausted", "Too many requests. Please wait and try again.");
     }
   }
+}
 
+async function sendOtpThroughEmailJs(email, otp, time) {
   try {
-    await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
+    await axios.post("https://api.emailjs.com/api/v1.0/email/send", {
       service_id: process.env.EMAILJS_SERVICE_ID,
       template_id: process.env.EMAILJS_TEMPLATE_ID,
       user_id: process.env.EMAILJS_USER_ID,
@@ -43,16 +76,407 @@ exports.sendOtpEmail = functions.https.onCall(async (data, context) => {
         to_email: email,
         passcode: otp,
         time: time,
-      }
+      },
     });
-
-    await rateLimitRef.set({
-      lastTimestamp: now,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    return { success: true };
   } catch (error) {
-    throw new functions.https.HttpsError('internal', 'Erro interno ao processar a solicitacao.');
+    console.error("EmailJS error", error.response ? error.response.status : error.message);
+    throw new HttpsError("internal", "Could not send the verification email.");
+  }
+}
+
+function formatExpiration(expiresAtMs, tzOffsetMinutes) {
+  const offset = Number.isInteger(tzOffsetMinutes) && Math.abs(tzOffsetMinutes) <= 14 * 60 ? tzOffsetMinutes : 0;
+  const local = new Date(expiresAtMs + offset * 60 * 1000);
+  const hh = String(local.getUTCHours()).padStart(2, "0");
+  const mm = String(local.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Legacy endpoint used by app versions published before the server-side OTP
+ * flow. The code is still generated by those clients, so the payload is
+ * strictly validated to stop the function from being used to send arbitrary
+ * content to arbitrary inboxes.
+ */
+exports.sendOtpEmail = onCall(async (request) => {
+  const payload = request.data || {};
+  const email = normalizeEmail(payload.email);
+  const otp = payload.otp;
+  const time = payload.time;
+
+  if (!email || typeof otp !== "string" || typeof time !== "string") {
+    throw new HttpsError("invalid-argument", "Email, OTP and time are required.");
+  }
+  if (!/^\d{6}$/.test(otp) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    throw new HttpsError("invalid-argument", "Invalid OTP payload.");
+  }
+
+  await enforceOtpRateLimits(request, email);
+  await sendOtpThroughEmailJs(email, otp, time);
+  return {success: true};
+});
+
+/**
+ * Generates a one-time code on the server, stores only its hash and emails it.
+ */
+exports.requestEmailCode = onCall(async (request) => {
+  const payload = request.data || {};
+  const email = normalizeEmail(payload.email);
+  if (!email) {
+    throw new HttpsError("invalid-argument", "Invalid email.");
+  }
+
+  await enforceOtpRateLimits(request, email);
+
+  const code = String(crypto.randomInt(100000, 1000000));
+  const salt = crypto.randomBytes(16).toString("hex");
+  const expiresAt = Date.now() + OTP_TTL_MS;
+
+  await db.collection("email_otps").doc(sha256(email)).set({
+    hash: sha256(salt + code),
+    salt,
+    attempts: 0,
+    expiresAt: Timestamp.fromMillis(expiresAt),
+  });
+
+  await sendOtpThroughEmailJs(email, code, formatExpiration(expiresAt, payload.tzOffsetMinutes));
+  return {success: true};
+});
+
+/**
+ * Verifies the emailed code and creates the email/password account on the
+ * server, already marked as verified.
+ */
+exports.createAccountWithCode = onCall(async (request) => {
+  const payload = request.data || {};
+  const email = normalizeEmail(payload.email);
+  const password = payload.password;
+  const code = payload.code;
+
+  if (!email || typeof password !== "string" || typeof code !== "string") {
+    throw new HttpsError("invalid-argument", "Email, password and code are required.");
+  }
+  if (password.length < 6 || password.length > 128) {
+    throw new HttpsError("invalid-argument", "weak-password");
+  }
+  if (!/^\d{6}$/.test(code)) {
+    throw new HttpsError("permission-denied", "invalid-code");
+  }
+
+  const ref = db.collection("email_otps").doc(sha256(email));
+  const verdict = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return "invalid-code";
+    const data = snap.data();
+    if (data.expiresAt.toMillis() < Date.now()) {
+      tx.delete(ref);
+      return "expired-code";
+    }
+    if ((data.attempts || 0) >= OTP_MAX_ATTEMPTS) {
+      tx.delete(ref);
+      return "too-many-attempts";
+    }
+    const expected = Buffer.from(data.hash, "hex");
+    const received = Buffer.from(sha256(data.salt + code), "hex");
+    if (!crypto.timingSafeEqual(expected, received)) {
+      tx.update(ref, {attempts: FieldValue.increment(1)});
+      return "invalid-code";
+    }
+    tx.delete(ref);
+    return "ok";
+  });
+
+  if (verdict !== "ok") {
+    throw new HttpsError("permission-denied", verdict);
+  }
+
+  try {
+    await admin.auth().createUser({email, password, emailVerified: true});
+  } catch (error) {
+    if (error.code === "auth/email-already-exists") {
+      throw new HttpsError("already-exists", "email-already-in-use");
+    }
+    if (error.code === "auth/invalid-password") {
+      throw new HttpsError("invalid-argument", "weak-password");
+    }
+    console.error("createUser error", error.code);
+    throw new HttpsError("internal", "registration-error");
+  }
+
+  return {success: true};
+});
+
+// ---------------------------------------------------------------------------
+// Communities helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Removes a member from a community. Deletes the community when it becomes
+ * empty and promotes a new superior admin when the superior leaves.
+ */
+async function removeMemberFromCommunity(communityId, uid) {
+  const ref = db.collection("communities").doc(communityId);
+  let deleteCommunity = false;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const data = snap.data();
+    const members = (data.members || []).filter((m) => m !== uid);
+    const roles = {...(data.roles || {})};
+    const wasSuperior = roles[uid] === "superior";
+    delete roles[uid];
+
+    if (members.length === 0) {
+      deleteCommunity = true;
+      return;
+    }
+
+    const update = {members, roles};
+    if (wasSuperior || data.ownerId === uid) {
+      const successor = members.find((m) => roles[m] === "superior") ||
+        members.find((m) => roles[m] === "admin") ||
+        members[0];
+      roles[successor] = "superior";
+      update.ownerId = successor;
+    }
+    tx.update(ref, update);
+  });
+
+  if (deleteCommunity) {
+    await db.recursiveDelete(ref);
+  }
+}
+
+/**
+ * Hands the community seat of `fromUid` over to `toUid`.
+ */
+async function transferCommunitySeat(communityId, fromUid, toUid) {
+  const ref = db.collection("communities").doc(communityId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const data = snap.data();
+    const members = (data.members || []).filter((m) => m !== fromUid && m !== toUid);
+    members.push(toUid);
+    const roles = {...(data.roles || {})};
+    roles[toUid] = roles[fromUid] || roles[toUid] || "member";
+    delete roles[fromUid];
+    const update = {members, roles};
+    if (data.ownerId === fromUid) update.ownerId = toUid;
+    tx.update(ref, update);
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Account merge (same person signing in with Google and with Apple)
+// ---------------------------------------------------------------------------
+
+function mergeDailyStats(a, b) {
+  if (!a) return {...b};
+  const out = {...b, ...a};
+  const platforms = ["ios", "android"];
+  const metrics = ["steps", "calories", "timeMin"];
+  let hasPlatformFields = false;
+
+  for (const platform of platforms) {
+    for (const metric of metrics) {
+      const key = `${metric}_${platform}`;
+      if (key in a || key in b) {
+        hasPlatformFields = true;
+        out[key] = Math.max(Number(a[key] || 0), Number(b[key] || 0));
+      }
+    }
+  }
+
+  for (const metric of metrics) {
+    const fromTotals = Math.max(Number(a[metric] || 0), Number(b[metric] || 0));
+    const fromPlatforms = hasPlatformFields ?
+      platforms.reduce((sum, p) => sum + Number(out[`${metric}_${p}`] || 0), 0) :
+      0;
+    out[metric] = Math.max(fromTotals, fromPlatforms);
+  }
+  out.distanceKm = Number(out.steps || 0) * 0.000762;
+  out.lastUpdated = FieldValue.serverTimestamp();
+  return out;
+}
+
+async function copyUserData(fromUid, toUid) {
+  const fromRef = db.collection("users").doc(fromUid);
+  const toRef = db.collection("users").doc(toUid);
+  const writer = db.bulkWriter();
+
+  const fromRuns = await fromRef.collection("runs").get();
+  if (!fromRuns.empty) {
+    const existing = new Set((await toRef.collection("runs").select().get()).docs.map((d) => d.id));
+    for (const doc of fromRuns.docs) {
+      if (!existing.has(doc.id)) writer.set(toRef.collection("runs").doc(doc.id), doc.data());
+    }
+  }
+
+  const fromStats = await fromRef.collection("daily_stats").get();
+  if (!fromStats.empty) {
+    const toStats = await toRef.collection("daily_stats").get();
+    const toById = new Map(toStats.docs.map((d) => [d.id, d.data()]));
+    for (const doc of fromStats.docs) {
+      writer.set(toRef.collection("daily_stats").doc(doc.id), mergeDailyStats(toById.get(doc.id), doc.data()));
+    }
+  }
+
+  await writer.close();
+
+  const [fromSnap, toSnap] = await Promise.all([fromRef.get(), toRef.get()]);
+  const fromData = fromSnap.exists ? fromSnap.data() : {};
+  const toData = toSnap.exists ? toSnap.data() : {};
+  const update = {};
+
+  for (const [key, value] of Object.entries(fromData)) {
+    if (["email", "deviceName", "username", "communityId"].includes(key)) continue;
+    if (!(key in toData)) update[key] = value;
+  }
+  update.isPremium = toData.isPremium === true || fromData.isPremium === true;
+  update.weeklySteps = Math.max(Number(toData.weeklySteps || 0), Number(fromData.weeklySteps || 0));
+
+  if (fromData.username) {
+    const fromUsernameRef = db.collection("usernames").doc(fromData.username);
+    const fromUsernameSnap = await fromUsernameRef.get();
+    const ownsUsername = fromUsernameSnap.exists && fromUsernameSnap.data().uid === fromUid;
+    if (!toData.username && ownsUsername) {
+      await fromUsernameRef.set({uid: toUid});
+      update.username = fromData.username;
+    } else if (ownsUsername) {
+      await fromUsernameRef.delete();
+    }
+  }
+
+  if (fromData.communityId) {
+    const toCommunity = toData.communityId ?
+      await db.collection("communities").doc(toData.communityId).get() :
+      null;
+    const toHasCommunity = toCommunity && toCommunity.exists &&
+      (toCommunity.data().members || []).includes(toUid);
+
+    if (toHasCommunity) {
+      await removeMemberFromCommunity(fromData.communityId, fromUid);
+    } else if (await transferCommunitySeat(fromData.communityId, fromUid, toUid)) {
+      update.communityId = fromData.communityId;
+    }
+  }
+
+  await toRef.set(update, {merge: true});
+}
+
+exports.mergeAccounts = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Sign in first.");
+  }
+  const keepUid = request.auth.uid;
+  const otherIdToken = request.data && request.data.otherIdToken;
+  if (typeof otherIdToken !== "string" || otherIdToken.length === 0) {
+    throw new HttpsError("invalid-argument", "otherIdToken is required.");
+  }
+
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(otherIdToken, true);
+  } catch (error) {
+    throw new HttpsError("permission-denied", "Invalid token for the other account.");
+  }
+
+  const otherUid = decoded.uid;
+  if (otherUid === keepUid) {
+    return {merged: false, alreadyLinked: true};
+  }
+  if (Date.now() / 1000 - decoded.auth_time > 10 * 60) {
+    throw new HttpsError("permission-denied", "The other account must have signed in recently.");
+  }
+
+  const [keepUser, otherUser] = await Promise.all([
+    admin.auth().getUser(keepUid),
+    admin.auth().getUser(otherUid),
+  ]);
+
+  const providersToMove = otherUser.providerData.filter((p) => FEDERATED_PROVIDERS.includes(p.providerId));
+  if (providersToMove.length === 0) {
+    throw new HttpsError("failed-precondition", "unsupported-provider");
+  }
+  for (const provider of providersToMove) {
+    if (keepUser.providerData.some((p) => p.providerId === provider.providerId)) {
+      throw new HttpsError("failed-precondition", "provider-already-linked");
+    }
+  }
+
+  await copyUserData(otherUid, keepUid);
+
+  const toLinkInfo = (p) => ({
+    providerId: p.providerId,
+    uid: p.uid,
+    email: p.email || undefined,
+    displayName: p.displayName || undefined,
+    photoURL: p.photoURL || undefined,
+  });
+
+  await admin.auth().updateUser(otherUid, {
+    providersToUnlink: providersToMove.map((p) => p.providerId),
+  });
+
+  const linked = [];
+  try {
+    for (const provider of providersToMove) {
+      await admin.auth().updateUser(keepUid, {providerToLink: toLinkInfo(provider)});
+      linked.push(provider);
+    }
+  } catch (error) {
+    console.error("Linking failed, restoring providers", error.code);
+    for (const provider of linked) {
+      await admin.auth().updateUser(keepUid, {providersToUnlink: [provider.providerId]}).catch(() => null);
+    }
+    for (const provider of providersToMove) {
+      await admin.auth().updateUser(otherUid, {providerToLink: toLinkInfo(provider)}).catch(() => null);
+    }
+    throw new HttpsError("internal", "link-failed");
+  }
+
+  await db.recursiveDelete(db.collection("users").doc(otherUid));
+  await admin.auth().deleteUser(otherUid);
+
+  return {merged: true, linkedProviders: providersToMove.map((p) => p.providerId)};
+});
+
+// ---------------------------------------------------------------------------
+// Triggers
+// ---------------------------------------------------------------------------
+
+/**
+ * Deletes everything that belongs to a user once the Auth account is deleted:
+ * profile, runs, daily stats, username and community membership.
+ */
+exports.cleanupDeletedUser = functionsV1.auth.user().onDelete(async (user) => {
+  const uid = user.uid;
+
+  const usernames = await db.collection("usernames").where("uid", "==", uid).get();
+  await Promise.all(usernames.docs.map((doc) => doc.ref.delete()));
+
+  const communities = await db.collection("communities").where("members", "array-contains", uid).get();
+  for (const doc of communities.docs) {
+    await removeMemberFromCommunity(doc.id, uid);
+  }
+
+  await db.recursiveDelete(db.collection("users").doc(uid));
+});
+
+/**
+ * User profiles are readable by community members (ranking), so personal
+ * fields written by older app versions are removed from them.
+ */
+exports.stripUserPii = functionsV1.firestore.document("users/{uid}").onWrite(async (change) => {
+  if (!change.after.exists) return;
+  const data = change.after.data();
+  if ("email" in data || "deviceName" in data) {
+    await change.after.ref.update({
+      email: FieldValue.delete(),
+      deviceName: FieldValue.delete(),
+    });
   }
 });

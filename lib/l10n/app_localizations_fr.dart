@@ -534,4 +534,67 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get makePrivateTooltip => 'Rendre Privée';
+
+  @override
+  String get linkedAccounts => 'Comptes liés';
+
+  @override
+  String get linkedAccountsDesc =>
+      'Liez Google et Apple pour utiliser le même compte et les mêmes données sur Android et iPhone.';
+
+  @override
+  String get linkAction => 'Lier';
+
+  @override
+  String get linkedLabel => 'Lié';
+
+  @override
+  String get linkMergeWarning =>
+      'Si ce compte contient déjà des données YARA, elles seront fusionnées avec le compte que vous utilisez actuellement, et l\'autre compte sera supprimé. Continuer ?';
+
+  @override
+  String get linkSuccess =>
+      'Compte lié. Vos données sont maintenant partagées entre vos appareils.';
+
+  @override
+  String get linkAlreadyLinked => 'Ce compte est déjà lié.';
+
+  @override
+  String get linkProviderInUse =>
+      'Un autre compte de ce fournisseur est déjà lié.';
+
+  @override
+  String get linkError => 'Impossible de lier le compte. Veuillez réessayer.';
+
+  @override
+  String get otpExpired => 'Le code a expiré. Veuillez en demander un nouveau.';
+
+  @override
+  String get otpTooManyAttempts =>
+      'Trop de tentatives. Veuillez demander un nouveau code.';
+
+  @override
+  String get tooManyRequests =>
+      'Trop de demandes. Veuillez patienter une minute et réessayer.';
+
+  @override
+  String get accountExistsDifferentMethod =>
+      'Cet e-mail utilise déjà une autre méthode de connexion. Connectez-vous avec celle-ci, puis liez cette méthode dans Comptes liés.';
+
+  @override
+  String get signInError =>
+      'Connexion impossible. Vérifiez votre e-mail et votre mot de passe.';
+
+  @override
+  String get confirmPasswordTitle => 'Confirmez votre mot de passe';
+
+  @override
+  String get confirmPasswordDesc =>
+      'Par sécurité, saisissez votre mot de passe pour continuer.';
+
+  @override
+  String get invalidUsername => 'Jusqu\'à 40 caractères, sans \"/\".';
+
+  @override
+  String get actionFailed => 'Une erreur s\'est produite. Veuillez réessayer.';
 }

@@ -1,0 +1,236 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function communityPath(communityId) {
+      return /databases/$(database)/documents/communities/$(communityId);
+    }
+
+    function isMemberOf(communityId) {
+      return communityId is string
+        && exists(communityPath(communityId))
+        && request.auth.uid in get(communityPath(communityId)).data.members;
+    }
+
+    function isManagerOf(communityId) {
+      return communityId is string
+        && exists(communityPath(communityId))
+        && get(communityPath(communityId)).data.roles.get(request.auth.uid, 'none') in ['superior', 'admin'];
+    }
+
+    function isMemberAfter(communityId) {
+      return communityId is string
+        && existsAfter(communityPath(communityId))
+        && request.auth.uid in getAfter(communityPath(communityId)).data.members;
+    }
+
+    function validUsername(name) {
+      return name is string && name.size() > 0 && name.size() <= 40;
+    }
+
+    // ---------------------------------------------------------------------
+    // Users
+    // ---------------------------------------------------------------------
+
+    // Only the fields being written are validated, so legacy values never
+    // block unrelated updates.
+    function validUserFields(data, keys) {
+      return (!('username' in keys) || validUsername(data.username))
+        && (!('weeklySteps' in keys) || (data.weeklySteps is int && data.weeklySteps >= 0 && data.weeklySteps <= 1000000))
+        && (!('communityId' in keys) || !('communityId' in data) || data.communityId is string);
+    }
+
+    // The username stored on the profile must be the one this user owns.
+    function ownsUsernameAfter(data) {
+      return !('username' in data)
+        || getAfter(/databases/$(database)/documents/usernames/$(data.username)).data.uid == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow get: if isSelf(userId);
+
+      // Ranking: members may list the profiles of their own community only.
+      allow list: if signedIn() && isMemberOf(resource.data.communityId);
+
+      allow create: if isSelf(userId)
+        && request.resource.data.keys().hasOnly(['email', 'deviceName', 'createdAt', 'isPremium', 'username', 'communityId', 'weeklySteps'])
+        && (!('isPremium' in request.resource.data) || request.resource.data.isPremium == false)
+        && validUserFields(request.resource.data, request.resource.data.keys().toSet())
+        && ownsUsernameAfter(request.resource.data)
+        && (!('communityId' in request.resource.data) || isMemberAfter(request.resource.data.communityId));
+
+      allow update: if isSelf(userId)
+        && changedKeys().hasOnly(['username', 'communityId', 'weeklySteps', 'email', 'deviceName'])
+        && (!('email' in request.resource.data) || request.resource.data.email == resource.data.get('email', null))
+        && (!('deviceName' in request.resource.data) || request.resource.data.deviceName == resource.data.get('deviceName', null))
+        && validUserFields(request.resource.data, changedKeys())
+        && (!('username' in changedKeys()) || ownsUsernameAfter(request.resource.data))
+        && (!('communityId' in changedKeys())
+            || !('communityId' in request.resource.data)
+            || isMemberAfter(request.resource.data.communityId));
+
+      // A community manager removing a kicked member's community link.
+      allow update: if signedIn() && request.auth.uid != userId
+        && changedKeys().hasOnly(['communityId'])
+        && !('communityId' in request.resource.data)
+        && isManagerOf(resource.data.communityId)
+        && !(userId in getAfter(communityPath(resource.data.communityId)).data.members);
+
+      allow delete: if isSelf(userId);
+
+      match /{subcollection}/{document=**} {
+        allow read, write: if isSelf(userId);
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Usernames (unique handle -> uid)
+    // ---------------------------------------------------------------------
+
+    match /usernames/{username} {
+      allow get: if signedIn();
+      allow list: if signedIn() && resource.data.uid == request.auth.uid;
+
+      allow create: if signedIn()
+        && validUsername(username)
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------------
+    // Communities
+    // ---------------------------------------------------------------------
+
+    function validCode(code) {
+      return code is string && (code == '' || code.matches('^[0-9]{5}$'));
+    }
+
+    function validCommunityName(name) {
+      return name is string && name.size() > 0 && name.size() <= 50;
+    }
+
+    function validRewards(data) {
+      return data.get('reward1', '') is string && data.get('reward1', '').size() <= 100
+        && data.get('reward2', '') is string && data.get('reward2', '').size() <= 100
+        && data.get('reward3', '') is string && data.get('reward3', '').size() <= 100
+        && data.get('rewardDescription', '') is string && data.get('rewardDescription', '').size() <= 500;
+    }
+
+    match /communities/{communityId} {
+
+      function oldData() { return resource.data; }
+      function newData() { return request.resource.data; }
+      function myRole() { return resource.data.roles.get(request.auth.uid, 'none'); }
+      function isMember() { return request.auth.uid in resource.data.members; }
+      function rolesDiff() { return request.resource.data.roles.diff(resource.data.roles); }
+
+      // Exactly one superior admin, every other role is admin or member.
+      function rolesAreValid() {
+        return newData().roles.values().removeAll(['admin', 'member']) == ['superior'];
+      }
+
+      function isJoin() {
+        return !isMember()
+          && oldData().code is string && oldData().code.size() == 5
+          && changedKeys().hasOnly(['members', 'roles'])
+          && newData().members.size() == oldData().members.size() + 1
+          && newData().members.toSet() == oldData().members.toSet().union([request.auth.uid].toSet())
+          && rolesDiff().affectedKeys() == [request.auth.uid].toSet()
+          && newData().roles[request.auth.uid] == 'member';
+      }
+
+      function isLeave() {
+        return isMember()
+          && myRole() != 'superior'
+          && changedKeys().hasOnly(['members', 'roles'])
+          && newData().members.size() == oldData().members.size() - 1
+          && newData().members.toSet() == oldData().members.toSet().difference([request.auth.uid].toSet())
+          && [request.auth.uid].toSet().hasAll(rolesDiff().affectedKeys())
+          && !(request.auth.uid in newData().roles);
+      }
+
+      function isKick() {
+        return isMember()
+          && myRole() in ['superior', 'admin']
+          && changedKeys().hasOnly(['members', 'roles'])
+          && newData().members.size() == oldData().members.size() - 1
+          && oldData().members.toSet().hasAll(newData().members.toSet())
+          && request.auth.uid in newData().members
+          && rolesDiff().addedKeys().size() == 0
+          && rolesDiff().changedKeys().size() == 0
+          && oldData().members.toSet().difference(newData().members.toSet()).hasAll(rolesDiff().removedKeys())
+          && rolesAreValid();
+      }
+
+      function isRolesEdit() {
+        return isMember()
+          && myRole() == 'superior'
+          && changedKeys().hasOnly(['roles', 'ownerId'])
+          && rolesDiff().removedKeys().size() == 0
+          && oldData().members.toSet().hasAll(rolesDiff().addedKeys().union(rolesDiff().changedKeys()))
+          && rolesAreValid()
+          && (!('ownerId' in changedKeys()) || newData().roles.get(newData().ownerId, 'none') == 'superior');
+      }
+
+      function isSettingsEdit() {
+        return isMember()
+          && myRole() in ['superior', 'admin']
+          && changedKeys().hasOnly(['code', 'name', 'reward1', 'reward2', 'reward3', 'rewardDescription'])
+          && (myRole() == 'superior' || !changedKeys().hasAny(['reward1', 'reward2', 'reward3', 'rewardDescription']))
+          && validCode(newData().code)
+          && validCommunityName(newData().name)
+          && validRewards(newData());
+      }
+
+      allow get: if signedIn() && isMember();
+
+      // Only lookups by a public 5-digit code are allowed (join / uniqueness check).
+      allow list: if signedIn()
+        && resource.data.code is string
+        && resource.data.code.size() == 5;
+
+      allow create: if signedIn()
+        && newData().keys().hasOnly(['name', 'code', 'ownerId', 'members', 'roles', 'reward1', 'reward2', 'reward3', 'rewardDescription'])
+        && newData().ownerId == request.auth.uid
+        && newData().members == [request.auth.uid]
+        && newData().roles.keys() == [request.auth.uid]
+        && newData().roles[request.auth.uid] == 'superior'
+        && validCommunityName(newData().name)
+        && validCode(newData().code)
+        && validRewards(newData());
+
+      allow update: if signedIn()
+        && (isJoin() || isLeave() || isKick() || isRolesEdit() || isSettingsEdit());
+
+      allow delete: if signedIn() && resource.data.members == [request.auth.uid];
+
+      match /ranking_history/{historyId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(communityPath(communityId)).data.members;
+      }
+    }
+  }
+}

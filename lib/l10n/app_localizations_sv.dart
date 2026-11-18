@@ -528,4 +528,66 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get makePrivateTooltip => 'Gör Privat';
+
+  @override
+  String get linkedAccounts => 'Länkade konton';
+
+  @override
+  String get linkedAccountsDesc =>
+      'Länka Google och Apple för att använda samma konto och data på Android och iPhone.';
+
+  @override
+  String get linkAction => 'Länka';
+
+  @override
+  String get linkedLabel => 'Länkat';
+
+  @override
+  String get linkMergeWarning =>
+      'Om det här kontot redan har YARA-data slås den ihop med kontot du använder nu, och det andra kontot tas bort. Fortsätta?';
+
+  @override
+  String get linkSuccess =>
+      'Kontot är länkat. Dina data delas nu mellan enheterna.';
+
+  @override
+  String get linkAlreadyLinked => 'Det här kontot är redan länkat.';
+
+  @override
+  String get linkProviderInUse =>
+      'Ett annat konto från den här leverantören är redan länkat.';
+
+  @override
+  String get linkError => 'Det gick inte att länka kontot. Försök igen.';
+
+  @override
+  String get otpExpired => 'Koden har gått ut. Begär en ny.';
+
+  @override
+  String get otpTooManyAttempts => 'För många försök. Begär en ny kod.';
+
+  @override
+  String get tooManyRequests =>
+      'För många förfrågningar. Vänta en minut och försök igen.';
+
+  @override
+  String get accountExistsDifferentMethod =>
+      'Den här e-postadressen använder redan en annan inloggningsmetod. Logga in med den och länka sedan den här under Länkade konton.';
+
+  @override
+  String get signInError =>
+      'Det gick inte att logga in. Kontrollera e-post och lösenord.';
+
+  @override
+  String get confirmPasswordTitle => 'Bekräfta ditt lösenord';
+
+  @override
+  String get confirmPasswordDesc =>
+      'Av säkerhetsskäl, ange ditt lösenord för att fortsätta.';
+
+  @override
+  String get invalidUsername => 'Upp till 40 tecken, utan \"/\".';
+
+  @override
+  String get actionFailed => 'Något gick fel. Försök igen.';
 }

@@ -1,8 +1,6 @@
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:anotherrunner/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
@@ -40,6 +38,41 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
+  String _authErrorMessage(AppLocalizations l10n, String? code) {
+    switch (code) {
+      case 'invalid-code':
+        return l10n.invalidOtp;
+      case 'expired-code':
+        return l10n.otpExpired;
+      case 'too-many-attempts':
+        return l10n.otpTooManyAttempts;
+      case 'too-many-requests':
+        return l10n.tooManyRequests;
+      case 'email-already-in-use':
+        return l10n.emailInUsePassword;
+      case 'weak-password':
+        return l10n.passwordTooShort;
+      case 'account-exists-with-different-credential':
+        return l10n.accountExistsDifferentMethod;
+      case 'invalid-credential':
+      case 'invalid-email':
+      case 'wrong-password':
+      case 'user-not-found':
+      case 'user-disabled':
+        return l10n.signInError;
+      default:
+        return l10n.actionFailed;
+    }
+  }
+
+  void _showAuthError(AuthResult result) {
+    if (!mounted || result.success || result.cancelled) return;
+    final l10n = AppLocalizations.of(context)!;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_authErrorMessage(l10n, result.errorCode))),
+    );
+  }
+
   Future<void> _signInWithEmail() async {
     final l10n = AppLocalizations.of(context)!;
 
@@ -48,11 +81,12 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     _toggleLoading();
-    await _auth.signInWithEmail(
+    final result = await _auth.signInWithEmail(
       _emailController.text.trim(),
       _passwordController.text.trim(),
     );
     _toggleLoading();
+    _showAuthError(result);
   }
 
   Future<void> _resetPassword() async {
@@ -122,28 +156,30 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     _toggleLoading();
-
-    final String otp = (Random().nextInt(900000) + 100000).toString();
-    final bool emailSent = await _auth.sendOtpEmail(email, otp);
-
+    final result = await _auth.requestEmailCode(email);
     _toggleLoading();
 
     if (!mounted) return;
 
-    if (emailSent) {
-      _showOtpDialog(email, password, otp);
+    if (result.success) {
+      _showOtpDialog(email, password);
+    } else if (result.errorCode == 'too-many-requests') {
+      _showAuthError(result);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.errorSendingOtp)));
     }
   }
 
-  void _showOtpDialog(String email, String password, String correctOtp) {
+  void _showOtpDialog(String email, String password) {
     final l10n = AppLocalizations.of(context)!;
     _otpController.clear();
+    bool verifying = false;
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
         title: Text(l10n.confirmEmailTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -174,47 +210,56 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: verifying ? null : () => Navigator.pop(dialogContext),
             child: Text(l10n.cancelBtn),
           ),
           ElevatedButton(
-            onPressed: () async {
-              if (_otpController.text.trim() == correctOtp) {
-                Navigator.pop(dialogContext);
-                _toggleLoading();
-                try {
-                  await _auth.registerWithEmail(email, password);
-                } on FirebaseAuthException catch (e) {
-                  if (!mounted) return;
-                  if (e.code == 'email-already-in-use') {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.emailInUsePassword)));
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? l10n.registrationError)));
-                  }
-                }
-                _toggleLoading();
-              } else {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.invalidOtp)));
-              }
-            },
-            child: Text(l10n.confirmBtn),
+            onPressed: verifying
+                ? null
+                : () async {
+                    final code = _otpController.text.trim();
+                    if (code.length != 6) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.invalidOtp)));
+                      return;
+                    }
+
+                    setDialogState(() => verifying = true);
+                    final result = await _auth.registerWithEmailCode(email, password, code);
+                    if (!dialogContext.mounted) return;
+
+                    if (result.success) {
+                      Navigator.pop(dialogContext);
+                      return;
+                    }
+
+                    setDialogState(() => verifying = false);
+                    if (result.errorCode != 'invalid-code') {
+                      Navigator.pop(dialogContext);
+                    }
+                    _showAuthError(result);
+                  },
+            child: verifying
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(l10n.confirmBtn),
           ),
         ],
+      ),
       ),
     );
   }
 
   Future<void> _signInWithGoogle() async {
     _toggleLoading();
-    await _auth.signInWithGoogle();
+    final result = await _auth.signInWithGoogle();
     _toggleLoading();
+    _showAuthError(result);
   }
 
   Future<void> _signInWithApple() async {
     _toggleLoading();
-    await _auth.signInWithApple();
+    final result = await _auth.signInWithApple();
     _toggleLoading();
+    _showAuthError(result);
   }
 
   Future<void> _changeLanguage(String languageCode) async {

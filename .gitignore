@@ -41,3 +41,7 @@ android/app/google-services.json
 certificado_upload.pem
 certificado_upload.pem
 android/app/google-services.json
+
+# Firebase config and emulator logs
+android/google-services.json
+*-debug.log
