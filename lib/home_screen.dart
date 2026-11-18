@@ -586,8 +586,8 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
 
-    // Runs, daily stats, profile, username and community membership are
-    // deleted on the server by the cleanupDeletedUser function.
+    // Runs, daily stats, profile, username, community membership and the
+    // account itself are deleted on the server by the deleteAccount function.
     final result = await authService.deleteAccount();
 
     if (loadingDialogContext != null && loadingDialogContext!.mounted) {

@@ -336,8 +336,8 @@ class AuthService {
     }
   }
 
-  /// Deletes the Auth account. Profile, runs, stats, username and community
-  /// membership are removed by the `cleanupDeletedUser` Cloud Function.
+  /// Deletes the account on the server: profile, runs, stats, username,
+  /// community membership and the Auth user. Call [reauthenticate] first.
   ///
   /// Returns `requires-recent-login` when the caller must reauthenticate first.
   Future<AuthResult> deleteAccount() async {
@@ -345,9 +345,14 @@ class AuthService {
     if (user == null) return const AuthResult.error('no-user');
 
     try {
-      await user.delete();
-      await _googleSignIn.signOut();
+      // Send a token that carries the fresh sign-in time.
+      await user.getIdToken(true);
+      await _functions.httpsCallable('deleteAccount').call();
+      await signOut();
       return const AuthResult.ok();
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('deleteAccount error: ${e.code} ${e.message}');
+      return AuthResult.error(e.message == 'requires-recent-login' ? 'requires-recent-login' : e.code);
     } on FirebaseAuthException catch (e) {
       debugPrint('Erro FirebaseAuth ao deletar: ${e.code}');
       return AuthResult.error(e.code);

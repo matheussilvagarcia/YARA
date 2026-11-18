@@ -1,5 +1,5 @@
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
-const functionsV1 = require("firebase-functions/v1");
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const crypto = require("crypto");
@@ -445,16 +445,14 @@ exports.mergeAccounts = onCall(async (request) => {
 });
 
 // ---------------------------------------------------------------------------
-// Triggers
+// Account deletion
 // ---------------------------------------------------------------------------
 
 /**
- * Deletes everything that belongs to a user once the Auth account is deleted:
- * profile, runs, daily stats, username and community membership.
+ * Removes everything that belongs to a user: profile, runs, daily stats,
+ * username and community membership.
  */
-exports.cleanupDeletedUser = functionsV1.auth.user().onDelete(async (user) => {
-  const uid = user.uid;
-
+async function cleanupUserData(uid) {
   const usernames = await db.collection("usernames").where("uid", "==", uid).get();
   await Promise.all(usernames.docs.map((doc) => doc.ref.delete()));
 
@@ -464,17 +462,41 @@ exports.cleanupDeletedUser = functionsV1.auth.user().onDelete(async (user) => {
   }
 
   await db.recursiveDelete(db.collection("users").doc(uid));
+}
+
+/**
+ * Deletes the caller's data and Auth account. The caller must have signed in
+ * (or reauthenticated) within the last 10 minutes.
+ */
+exports.deleteAccount = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Sign in first.");
+  }
+  const authTime = Number(request.auth.token.auth_time || 0);
+  if (Date.now() / 1000 - authTime > 10 * 60) {
+    throw new HttpsError("failed-precondition", "requires-recent-login");
+  }
+
+  const uid = request.auth.uid;
+  await cleanupUserData(uid);
+  await admin.auth().deleteUser(uid);
+  return {success: true};
 });
+
+// ---------------------------------------------------------------------------
+// Triggers
+// ---------------------------------------------------------------------------
 
 /**
  * User profiles are readable by community members (ranking), so personal
  * fields written by older app versions are removed from them.
  */
-exports.stripUserPii = functionsV1.firestore.document("users/{uid}").onWrite(async (change) => {
-  if (!change.after.exists) return;
-  const data = change.after.data();
+exports.stripUserPii = onDocumentWritten({document: "users/{uid}", region: "us-central1"}, async (event) => {
+  const after = event.data && event.data.after;
+  if (!after || !after.exists) return;
+  const data = after.data();
   if ("email" in data || "deviceName" in data) {
-    await change.after.ref.update({
+    await after.ref.update({
       email: FieldValue.delete(),
       deviceName: FieldValue.delete(),
     });
