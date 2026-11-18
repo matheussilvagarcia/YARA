@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isRunActive = false;
   int _runSeconds = 0;
   double _runDistance = 0.0;
-  StreamSubscription<Map<String, dynamic>?>? _serviceSubscription;
+  StreamSubscription? _serviceSubscription;
 
   @override
   void initState() {
@@ -557,11 +557,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirm2 != true || !mounted) return;
 
+    final messenger = ScaffoldMessenger.of(context);
+    BuildContext? loadingDialogContext;
+
     try {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
+        builder: (dialogContext) {
+          loadingDialogContext = dialogContext;
+          return const Center(child: CircularProgressIndicator());
+        },
       );
 
       final batch = FirebaseFirestore.instance.batch();
@@ -588,8 +594,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       await batch.commit();
 
-      await user.delete();
-
       final prefs = await SharedPreferences.getInstance();
       final isDark = prefs.getBool('isDarkMode');
       final lang = prefs.getString('languageCode');
@@ -597,17 +601,19 @@ class _HomeScreenState extends State<HomeScreen> {
       if (isDark != null) await prefs.setBool('isDarkMode', isDark);
       if (lang != null) await prefs.setString('languageCode', lang);
 
-      if (mounted) {
-        Navigator.pop(context);
-        await AuthService().signOut();
+      await user.delete();
+      await AuthService().signOut();
+
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
       }
     } catch (e) {
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.deleteAccountError)),
-        );
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
       }
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.deleteAccountError)),
+      );
     }
   }
 
